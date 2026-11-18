@@ -29,8 +29,8 @@ from chestai.model import Policy, load_policy  # noqa: E402
 from chestai.ppo import Stream, RunningScale, ppo_update  # noqa: E402
 from chestai.levels import LevelBuffer  # noqa: E402
 
-DENSE = dict(chests_min=5, chests_max=12, cluster_gap_max=16, ready_share=0.65, init_timer_max_s=40,
-             reset_cd_max_s=30, ep_ticks_min=3600, ep_ticks_max=7200)
+DENSE = dict(chests_min=6, chests_max=14, cluster_gap_max=24, ready_share=0.65, init_timer_max_s=40,
+             reset_cd_max_s=30, ep_ticks_min=3600, ep_ticks_max=7200, map_size=128, relief=24, clutter=8)
 
 # Settings of each stage, on top of the simulator's defaults.
 STAGES = [

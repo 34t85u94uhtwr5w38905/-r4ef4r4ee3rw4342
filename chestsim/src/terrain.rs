@@ -134,8 +134,21 @@ pub fn generate(cfg: &TerrainCfg, rng: &mut Rng) -> Map {
     let mut tries = 0;
     while chests.len() < n && tries < 2000 {
         tries += 1;
-        let cx = rng.range(margin, sx as f64 - margin);
-        let cz = rng.range(margin, sz as f64 - margin);
+        // Most groups sit on a hilltop: the highest of a few places tried.
+        let mut cx = rng.range(margin, sx as f64 - margin);
+        let mut cz = rng.range(margin, sz as f64 - margin);
+        if rng.chance(0.6) {
+            let mut best = w.ground(cx as i32, cz as i32);
+            for _ in 0..10 {
+                let (x, z) = (rng.range(margin, sx as f64 - margin), rng.range(margin, sz as f64 - margin));
+                let g = w.ground(x as i32, z as i32);
+                if g > best && !w.water(x as i32, g, z as i32) {
+                    best = g;
+                    cx = x;
+                    cz = z;
+                }
+            }
+        }
         let k = 1 + (rng.f64() * cfg.cluster_max as f64) as usize;
         let mut last = (cx, cz);
         for _ in 0..k {

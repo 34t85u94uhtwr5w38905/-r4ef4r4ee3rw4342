@@ -110,19 +110,24 @@ final class Demo {
             run(s, "effect " + n + " 1 1000000 2 true");
             WorldServer w = s.worldServerForDimension(0);
             int x0 = (int) Math.floor(me.posX), y = (int) Math.floor(me.posY), z0 = (int) Math.floor(me.posZ);
-            // Four chests on a line that bends, 14 to 20 blocks apart, and walls to pin mobs on.
-            int[][] at = {{14, 4}, {30, -6}, {44, 8}, {28, 22}};
+            // Four chests on stepped hills 3 to 7 blocks high, 25 to 35 blocks apart: the
+            // agent climbs, drops and can travel with Punch arrows between them.
+            int[][] at = {{24, 4, 4}, {52, -10, 7}, {74, 16, 5}, {44, 38, 3}};
             for (int[] a : at) {
+                int cx = x0 + a[0], cz = z0 + a[1], h = a[2];
+                for (int k = 1; k <= h; k++) {
+                    int r = 2 * (h - k) + 3;
+                    run(s, "fill " + (cx - r) + " " + (y + k - 1) + " " + (cz - r) + " " + (cx + r) + " " + (y + k - 1) + " " + (cz + r) + " grass");
+                }
                 Chest c = new Chest();
-                c.pos = new BlockPos(x0 + a[0], y, z0 + a[1]);
+                c.pos = new BlockPos(cx, y + h, cz);
                 chests.add(c);
-                run(s, "setblock " + c.pos.getX() + " " + y + " " + c.pos.getZ() + " chest");
-                run(s, "fill " + (c.pos.getX() - 4) + " " + y + " " + (c.pos.getZ() + 4) + " " + (c.pos.getX() + 1) + " " + (y + 1) + " " + (c.pos.getZ() + 4) + " stonebrick");
+                run(s, "setblock " + cx + " " + (y + h) + " " + cz + " chest");
+                run(s, "fill " + (cx - 3) + " " + (y + h) + " " + (cz + 3) + " " + (cx + 1) + " " + (y + h + 1) + " " + (cz + 3) + " stonebrick");
             }
-            run(s, "fill " + (x0 + 20) + " " + y + " " + (z0 - 2) + " " + (x0 + 22) + " " + (y + 2) + " " + (z0 + 2) + " stone");
-            run(s, "fill " + (x0 + 36) + " " + y + " " + (z0 + 12) + " " + (x0 + 38) + " " + y + " " + (z0 + 18) + " stone");
+            run(s, "fill " + (x0 + 36) + " " + y + " " + (z0 - 4) + " " + (x0 + 38) + " " + (y + 3) + " " + (z0 + 2) + " stone");
             for (Chest c : chests) {
-                c.holo = new EntityArmorStand(w, c.pos.getX() + 0.5, y + 0.6, c.pos.getZ() + 0.5);
+                c.holo = new EntityArmorStand(w, c.pos.getX() + 0.5, c.pos.getY() + 0.6, c.pos.getZ() + 0.5);
                 c.holo.setInvisible(true);
                 if (!Boolean.getBoolean("chestai.demo.solidholo")) {
                     net.minecraft.nbt.NBTTagCompound tag = new net.minecraft.nbt.NBTTagCompound();
@@ -156,9 +161,6 @@ final class Demo {
             state = 3;
         } else if (state == 3) {
             ticks++;
-            if (ticks == 20 * seconds / 2) {
-                mc.gameSettings.thirdPersonView = 0;
-            }
             if (!mod.on() || ticks >= 20 * seconds) {
                 if (mod.on()) {
                     mod.flip(mc);

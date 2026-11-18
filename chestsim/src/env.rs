@@ -107,6 +107,11 @@ pub struct Params {
     pub rival_prob: f64,
     pub rivals_max: f64,
     pub w_rival: f64,
+    /// Cost of turning the view, per tick: w_turn * ((|dyaw| + |dpitch|) / 15)^2, so that
+    /// the agent aims like a player and not like a turret.
+    pub w_turn: f64,
+    /// Cost of turning back the other way right after a turn (jitter).
+    pub w_flip: f64,
 }
 
 impl Default for Params {
@@ -182,6 +187,8 @@ impl Default for Params {
             rival_prob: 0.5,
             rivals_max: 3.0,
             w_rival: 0.01,
+            w_turn: 0.006,
+            w_flip: 0.02,
         }
     }
 }
@@ -212,7 +219,7 @@ params_table!(
     w_horseman, w_golem, w_rider, mob_hp_min, mob_hp_max, mob_dmg_min, mob_dmg_max, mob_kbr_max,
     mob_kb_extra_max, mob_speed_min, mob_speed_max, slow_prob, blind_prob, proj_dmg_max, proj_punch_max,
     extreme_share, gapples_min, gapples_max, pearls_max, potions_max, start_hurt, w_claim, w_kill, w_wave,
-    w_reset, w_dmg, w_hurt, w_death, w_tp, w_waste, w_shape, w_punch, gamma, arrow_self_dmg, rival_prob, rivals_max, w_rival,
+    w_reset, w_dmg, w_hurt, w_death, w_tp, w_waste, w_shape, w_punch, gamma, arrow_self_dmg, rival_prob, rivals_max, w_rival, w_turn, w_flip,
 );
 
 /// What the client remembers of a chest it has seen: the hologram's last
@@ -244,6 +251,7 @@ pub struct Env {
     pub teacher_ate: i64,
     /// Seed of the next episode's level, if the trainer picked one.
     pub next_seed: Option<u64>,
+    last_dyaw: f32,
 }
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
@@ -370,7 +378,7 @@ impl Env {
         let mut rng = Rng::new(seed);
         let (g, ping, holo, extreme, ep) = new_game(&p, &mut rng);
         let n = g.chests.len();
-        let mut e = Env { p, rng, g, known: vec![Known::default(); n], ticks: 0, ep_ticks: ep, ping_ms: ping, holo_range: holo, extreme, last_hp: 20.0, since_hurt: 100, phi: 0.0, stats: [0.0; STATS_DIM], teacher_ate: -1000, next_seed: None };
+        let mut e = Env { p, rng, g, known: vec![Known::default(); n], ticks: 0, ep_ticks: ep, ping_ms: ping, holo_range: holo, extreme, last_hp: 20.0, since_hurt: 100, phi: 0.0, stats: [0.0; STATS_DIM], teacher_ate: -1000, next_seed: None, last_dyaw: 0.0 };
         e.last_hp = e.g.sp.hp;
         e.update_known();
         e.phi = e.potential();
@@ -390,6 +398,7 @@ impl Env {
         self.holo_range = holo;
         self.extreme = extreme;
         self.last_hp = self.g.sp.hp;
+        self.last_dyaw = 0.0;
         self.since_hurt = 100;
         self.teacher_ate = -1000;
         self.update_known();
@@ -829,6 +838,12 @@ impl Env {
             - p.w_waste * (ev.gapple_waste + ev.potion_waste) as f64
             + p.w_punch * ev.self_punch as f64
             - p.w_rival * ev.rival_near as f64;
+        let turn = (inp.dyaw.abs() + inp.dpitch.abs()) as f64 / 15.0;
+        r -= p.w_turn * turn * turn;
+        if inp.dyaw.abs() >= 2.0 && self.last_dyaw.abs() >= 2.0 && inp.dyaw.signum() != self.last_dyaw.signum() {
+            r -= p.w_flip;
+        }
+        self.last_dyaw = inp.dyaw;
         // Shaping by potential; the potential of a dead player is zero.
         let phi = if ev.died { 0.0 } else { self.potential() };
         r += p.gamma * phi - self.phi;
