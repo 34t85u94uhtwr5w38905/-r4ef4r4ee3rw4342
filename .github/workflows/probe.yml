@@ -1,0 +1,21 @@
+name: probe
+on:
+  push:
+    branches: [claude/project-thread-v5n15f]
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        n: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
+    steps:
+      - name: info
+        run: |
+          echo "job=${{ matrix.n }} start=$(date -u +%H:%M:%S)"
+          echo "cpus=$(nproc) mem=$(free -g | awk '/Mem/{print $2}')G disk=$(df -h / | awk 'NR==2{print $4}')"
+          sleep 90
+          echo "end=$(date -u +%H:%M:%S)"
