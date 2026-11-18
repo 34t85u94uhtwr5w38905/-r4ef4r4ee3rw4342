@@ -128,3 +128,21 @@ pub unsafe extern "C" fn cs_vec_set_next_seed(p: *mut VecEnv, i: i32, seed: u64)
     let v = &mut *p;
     v.envs[i as usize].next_seed = Some(seed);
 }
+
+/// Writes environment `i`'s map (`what` 0) or this tick's state (`what` 1)
+/// as JSON into `buf`, and returns its length; if `cap` is too small,
+/// nothing is written and the length needed is returned.
+///
+/// # Safety
+/// `buf` must hold `cap` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn cs_vec_json(p: *mut VecEnv, i: i32, what: i32, buf: *mut u8, cap: i64) -> i64 {
+    let v = &*p;
+    let e = &v.envs[i as usize];
+    let s = if what == 0 { e.map_json() } else { e.frame_json() };
+    let n = s.len() as i64;
+    if n <= cap {
+        std::ptr::copy_nonoverlapping(s.as_ptr(), buf, s.len());
+    }
+    n
+}

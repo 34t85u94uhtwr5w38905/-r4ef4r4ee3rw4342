@@ -40,6 +40,8 @@ def lib():
         L.cs_act_dims.argtypes = [ctypes.POINTER(ctypes.c_int32)]
         L.cs_vec_teacher.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32)]
         L.cs_vec_set_next_seed.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_uint64]
+        L.cs_vec_json.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.c_int64]
+        L.cs_vec_json.restype = ctypes.c_int64
         L.cs_vec_env_stats.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
         L.cs_param_name.restype = ctypes.c_char_p
         L.cs_param_name.argtypes = [ctypes.c_int]
@@ -109,6 +111,16 @@ class VecEnv:
     def set_next_seed(self, i, seed):
         """The level environment i plays after its episode ends."""
         self.L.cs_vec_set_next_seed(self.p, int(i), int(seed))
+
+    def json(self, i, what):
+        """Environment i's map (what 0) or its state this tick (what 1), as JSON text."""
+        cap = 1 << 16
+        while True:
+            buf = ctypes.create_string_buffer(cap)
+            n = self.L.cs_vec_json(self.p, int(i), int(what), buf, cap)
+            if n <= cap:
+                return buf.raw[:n].decode()
+            cap = int(n) + 1
 
     def env_stats(self, i):
         """Environment i's statistics so far, as an array in STAT_NAMES order."""

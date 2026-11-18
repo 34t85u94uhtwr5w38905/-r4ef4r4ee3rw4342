@@ -1155,3 +1155,73 @@ impl Env {
         a
     }
 }
+
+impl Env {
+    /// The map from above, for the viewer: per column the height of the
+    /// top solid block and whether water lies over it, as JSON.
+    pub fn map_json(&self) -> String {
+        let w = &self.g.world;
+        let mut h = String::new();
+        let mut wa = String::new();
+        for z in 0..w.sz {
+            for x in 0..w.sx {
+                let g = w.ground(x, z);
+                let mut top = g;
+                while top < w.sy && w.water(x, top, z) {
+                    top += 1;
+                }
+                if !h.is_empty() {
+                    h.push(',');
+                    wa.push(',');
+                }
+                h.push_str(&g.to_string());
+                wa.push(if top > g { '1' } else { '0' });
+            }
+        }
+        format!("{{\"sx\":{},\"sz\":{},\"h\":[{}],\"water\":[{}]}}", w.sx, w.sz, h, wa)
+    }
+
+    /// The true state of this tick, for the viewer, as JSON.
+    pub fn frame_json(&self) -> String {
+        let g = &self.g;
+        let p = &g.sp;
+        let mut s = format!(
+            "{{\"t\":{},\"p\":[{:.2},{:.2},{:.2},{:.1}],\"hp\":{:.1},\"abs\":{:.1},\"slot\":{},\"using\":{}",
+            g.t, p.pos[0], p.pos[1], p.pos[2], g.cp.l.yaw, p.hp, p.absorption, g.cp.slot, g.cp.using as i32
+        );
+        s.push_str(",\"mobs\":[");
+        let mut first = true;
+        for m in g.mobs.iter().filter(|m| m.alive) {
+            if !first {
+                s.push(',');
+            }
+            first = false;
+            s.push_str(&format!("[{:.2},{:.2},{:.2},{},{:.0},{:.0},{},{}]", m.l.body.pos[0], m.l.body.pos[1], m.l.body.pos[2], m.kind as i32, m.hp, m.st.hp, m.chest, m.hurt_time));
+        }
+        s.push_str("],\"chests\":[");
+        for (i, c) in g.chests.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&format!("[{},{},{},{},{},{}]", c.block[0], c.block[1], c.block[2], c.state as i32, c.shown_secs(g.t), if c.state == ChestState::Active { WAVE_TICKS - (g.t - c.active_since) } else { 0 }));
+        }
+        s.push_str("],\"projs\":[");
+        let mut first = true;
+        for q in g.projs.iter().filter(|q| q.alive) {
+            if !first {
+                s.push(',');
+            }
+            first = false;
+            s.push_str(&format!("[{:.2},{:.2},{:.2},{},{}]", q.pos[0], q.pos[1], q.pos[2], q.kind as i32, q.owner));
+        }
+        s.push_str("],\"rivals\":[");
+        for (i, r) in g.rivals.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&format!("[{:.2},{:.2},{:.2}]", r.pos[0], r.pos[1], r.pos[2]));
+        }
+        s.push_str(&format!("],\"claims\":{},\"kills\":{},\"resets\":{}}}", self.stats[2], self.stats[3], self.stats[5]));
+        s
+    }
+}
