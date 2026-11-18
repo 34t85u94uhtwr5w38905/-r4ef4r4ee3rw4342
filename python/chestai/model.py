@@ -147,13 +147,16 @@ class Policy(nn.Module):
             logp = logp + d.log_prob(a)
         return torch.stack(acts, -1), logp, self.value(h, priv), state
 
-    def evaluate_seq(self, obs, priv, actions, state, done):
+    def evaluate_seq(self, obs, priv, actions, state, done, with_logits=False):
         hs = self.core_seq(obs, state, done)
         logp, ent = 0.0, 0.0
-        for i, lg in enumerate(self.logits(hs)):
+        lgs = self.logits(hs)
+        for i, lg in enumerate(lgs):
             d = torch.distributions.Categorical(logits=lg)
             logp = logp + d.log_prob(actions[..., i])
             ent = ent + d.entropy()
+        if with_logits:
+            return logp, ent, self.value(hs, priv), lgs
         return logp, ent, self.value(hs, priv)
 
 

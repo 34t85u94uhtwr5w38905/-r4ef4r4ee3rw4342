@@ -125,18 +125,32 @@ def ppo_update(policy, opt, streams, vs, cfg):
     adv_raw = adv / scale
     adv = (adv - adv.mean()) / (adv.std() + 1e-8)
     T, B = obs.shape[0], obs.shape[1]
-    stats = {"pi_loss": 0.0, "v_loss": 0.0, "entropy": 0.0, "kl": 0.0, "clip_frac": 0.0}
+    stats = {"pi_loss": 0.0, "v_loss": 0.0, "entropy": 0.0, "kl": 0.0, "clip_frac": 0.0, "kl_ref": 0.0}
     n_upd = 0
     for _ in range(cfg["epochs"]):
         perm = torch.randperm(B)
         for mb in perm.chunk(cfg["minibatches"]):
-            logp, ent, v = policy.evaluate_seq(obs[:, mb], priv[:, mb], act[:, mb], (h0[mb], c0[mb]), done[:, mb])
+            ref = cfg.get("ref")
+            if ref is not None and cfg.get("ref_coef", 0.0) > 0:
+                logp, ent, v, lgs = policy.evaluate_seq(obs[:, mb], priv[:, mb], act[:, mb], (h0[mb], c0[mb]), done[:, mb], with_logits=True)
+                with torch.no_grad():
+                    ref_lgs = ref.logits(ref.core_seq(obs[:, mb], (h0[mb], c0[mb]), done[:, mb]))
+                # KL(reference || policy), summed over the heads: keeps what was learnt
+                # by imitation (AlphaStar keeps its agents near the supervised one the same way).
+                kl_ref = 0.0
+                for lg, rl in zip(lgs, ref_lgs):
+                    rp = torch.log_softmax(rl, -1)
+                    kl_ref = kl_ref + (rp.exp() * (rp - torch.log_softmax(lg, -1))).sum(-1)
+                kl_ref = kl_ref.mean()
+            else:
+                logp, ent, v = policy.evaluate_seq(obs[:, mb], priv[:, mb], act[:, mb], (h0[mb], c0[mb]), done[:, mb])
+                kl_ref = torch.zeros(())
             ratio = torch.exp(logp - logp_old[:, mb])
             a = adv[:, mb]
             pi_loss = -torch.min(ratio * a, torch.clamp(ratio, 1 - cfg["clip"], 1 + cfg["clip"]) * a).mean()
             v_loss = 0.5 * (v - ret_n[:, mb]).pow(2).mean()
             entropy = ent.mean()
-            loss = cfg.get("pi_coef", 1.0) * (pi_loss - cfg["ent_coef"] * entropy) + cfg["vf_coef"] * v_loss
+            loss = cfg.get("pi_coef", 1.0) * (pi_loss - cfg["ent_coef"] * entropy + cfg.get("ref_coef", 0.0) * kl_ref) + cfg["vf_coef"] * v_loss
             opt.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(policy.parameters(), cfg["max_grad_norm"])
@@ -144,6 +158,7 @@ def ppo_update(policy, opt, streams, vs, cfg):
             with torch.no_grad():
                 stats["pi_loss"] += float(pi_loss)
                 stats["v_loss"] += float(v_loss)
+                stats["kl_ref"] += float(kl_ref)
                 stats["entropy"] += float(entropy)
                 stats["kl"] += float((logp_old[:, mb] - logp).mean())
                 stats["clip_frac"] += float(((ratio - 1).abs() > cfg["clip"]).float().mean())

@@ -134,6 +134,9 @@ def main():
     ap.add_argument("--share-dir", default="")
     ap.add_argument("--sync-cmd", default="", help="shell command run at each exchange; {round} is the round number")
     ap.add_argument("--vf-warmup", type=int, default=0, help="iterations at the start that train only the value")
+    ap.add_argument("--ref", default="", help="checkpoint the policy is kept near (KL), e.g. the imitation start")
+    ap.add_argument("--ref-coef", type=float, default=0.0, help="weight of KL(reference || policy); halves every --ref-half iterations")
+    ap.add_argument("--ref-half", type=float, default=0.0, help="iterations over which the KL weight halves (0: constant)")
     ap.add_argument("--eval-episodes", type=int, default=0, help="machine 0 runs the fixed test with this many episodes a kind at each round (0: off)")
     ap.add_argument("--plr", type=float, default=0.0, help="share of episodes replayed from the level buffer (0: off)")
     args = ap.parse_args()
@@ -169,6 +172,12 @@ def main():
     opt = torch.optim.Adam(policy.parameters(), lr=args.lr, eps=1e-5)
     cfg = dict(gamma=args.gamma, lam=args.lam, epochs=args.epochs, minibatches=args.minibatches, clip=args.clip,
                ent_coef=args.ent, vf_coef=args.vf, max_grad_norm=0.5)
+    if args.ref and args.ref_coef > 0 and os.path.exists(args.ref):
+        ref, _ = load_policy(args.ref)
+        ref.eval()
+        for q in ref.parameters():
+            q.requires_grad_(False)
+        cfg["ref"] = ref
     stream = Stream("main", args.n_envs, env.obs_dim, env.priv_dim, env.heads, args.horizon, policy.hidden)
     obs, priv = env.reset()
     n = args.n_envs
@@ -214,6 +223,7 @@ def main():
         stream.choose(policy, obs, priv)
         t_roll = time.time() - t_it
         cfg["pi_coef"] = 0.0 if iters < args.vf_warmup else 1.0
+        cfg["ref_coef"] = args.ref_coef * (0.5 ** (iters / args.ref_half) if args.ref_half > 0 else 1.0)
         st = ppo_update(policy, opt, [stream], vs, cfg)
         if plr is not None:
             # Score of a level: its mean positive advantage over the episode.
@@ -252,7 +262,7 @@ def main():
                 "gapple_waste": round(acc["gapple_waste"] / max(acc["gapples"], 1), 2),
                 "max_simul": acc.get("max_simul", 0),
                 "sps": round(st["samples"] / (time.time() - t_it)), "roll_s": round(t_roll, 1),
-                "ent": round(st["entropy"], 3), "kl": round(st["kl"], 4), "v_loss": round(st["v_loss"], 3),
+                "ent": round(st["entropy"], 3), "kl": round(st["kl"], 4), "kl_ref": round(st["kl_ref"], 3), "v_loss": round(st["v_loss"], 3),
                 "rew": round(st["mean_step_reward"], 4),
             }
             if plr is not None:
