@@ -21,11 +21,13 @@ public final class Settings {
     public double leash = 5.5;
     /** Seconds the server makes a player wait between two pearls. */
     public double pearlCooldownS = 15.0;
-    public String claimText = "click here to claim";
+    public String claimText = "click here to claim,click to claim,reclamar";
     /** Colour codes (the letter after the section sign) of the line a running wave shows. */
     public String activeColors = "c4";
     /** Draw the agent's choices as in training (true), or take the likeliest one. */
     public boolean draw = true;
+    /** Write what the agent sees and does to config/chestai/registro.txt. */
+    public boolean log = true;
     /** Mobs (by entity name, lower case) to leave alone. */
     public final List<String> ignore = new ArrayList<String>();
 
@@ -44,8 +46,8 @@ public final class Settings {
         + "# Segundos de espera del servidor entre dos perlas.\n"
         + "perla_espera=15\n"
         + "\n"
-        + "# Texto del holograma cuando el cofre se puede reclamar (sin importar mayusculas).\n"
-        + "texto_claim=click here to claim\n"
+        + "# Textos del holograma cuando el cofre se puede reclamar, separados por comas (sin importar mayusculas).\n"
+        + "texto_claim=click here to claim,click to claim,reclamar\n"
         + "\n"
         + "# Colores (la letra despues de la seccion) del mensaje del holograma mientras hay una oleada. c = rojo, 4 = rojo oscuro.\n"
         + "colores_oleada=c4\n"
@@ -54,7 +56,10 @@ public final class Settings {
         + "eleccion=azar\n"
         + "\n"
         + "# Mobs a ignorar, por nombre de entidad separados por comas (por ejemplo silverfish,bat).\n"
-        + "ignorar=bat\n";
+        + "ignorar=bat\n"
+        + "\n"
+        + "# si: anota lo que ve y hace en config/chestai/registro.txt (para revisar problemas). no: nada.\n"
+        + "registro=si\n";
 
     public static Settings parse(Properties p) {
         Settings s = new Settings();
@@ -75,6 +80,10 @@ public final class Settings {
         s.ping = number(p.getProperty("ping"), -1.0);
         s.leash = number(p.getProperty("correa"), 5.5);
         s.pearlCooldownS = number(p.getProperty("perla_espera"), 15.0);
+        String lg = p.getProperty("registro");
+        if (lg != null) {
+            s.log = !lg.trim().toLowerCase(Locale.ROOT).startsWith("n");
+        }
         String t = p.getProperty("texto_claim");
         if (t != null && t.trim().length() > 0) {
             s.claimText = t.trim().toLowerCase(Locale.ROOT);

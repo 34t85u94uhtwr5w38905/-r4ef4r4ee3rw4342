@@ -71,7 +71,9 @@ public final class ChestAi {
 
     private static void say(Minecraft mc, String line) {
         if (line != null && mc.ingameGUI != null) {
-            mc.ingameGUI.getChatGUI().printChatMessage(new ChatComponentText(line));
+            for (String one : line.split("\n")) {
+                mc.ingameGUI.getChatGUI().printChatMessage(new ChatComponentText(one));
+            }
         }
     }
 
@@ -98,13 +100,27 @@ public final class ChestAi {
     }
 
     @SubscribeEvent
+    public void camera(net.minecraftforge.client.event.EntityViewRenderEvent.CameraSetup e) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (session == null || !session.on() || e.entity != mc.thePlayer || mc.gameSettings.thirdPersonView == 2) {
+            return;
+        }
+        float[] d = session.cameraOffset((float) e.renderPartialTicks);
+        if (d != null) {
+            e.yaw += d[0];
+            e.pitch += d[1];
+        }
+    }
+
+    @SubscribeEvent
     public void hurt(net.minecraftforge.event.entity.living.LivingHurtEvent e) {
         if (demo != null && Boolean.getBoolean("chestai.debug") && !e.entity.worldObj.isRemote) {
             net.minecraft.entity.Entity src = e.source.getEntity();
             String held = src instanceof net.minecraft.entity.player.EntityPlayer && ((net.minecraft.entity.player.EntityPlayer) src).getHeldItem() != null
                 ? ((net.minecraft.entity.player.EntityPlayer) src).getHeldItem().getDisplayName() : "-";
-            System.out.println(String.format(java.util.Locale.ROOT, "HURT %s %.1f by %s with %s resist=%d",
-                e.entity.getClass().getSimpleName(), e.ammount, e.source.getDamageType(), held, e.entity.hurtResistantTime));
+            System.out.println(String.format(java.util.Locale.ROOT, "HURT %s %.1f by %s with %s resist=%d src=%s self=%b",
+                e.entity.getClass().getSimpleName(), e.ammount, e.source.getDamageType(), held, e.entity.hurtResistantTime,
+                src == null ? "-" : src.getClass().getSimpleName(), src == e.entity));
         }
     }
 
