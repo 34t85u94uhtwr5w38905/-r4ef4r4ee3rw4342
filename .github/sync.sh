@@ -19,7 +19,8 @@ cd "$W"
 git checkout -q --orphan "w$R" 2>/dev/null || git checkout -q "w$R"
 git rm -rqf --cached . >/dev/null 2>&1 || true
 rm -f ./*.pt
-cp "$f" . && git add "m${M}_r${R}.pt"
+RUN=${GITHUB_RUN_ID:-0}
+cp "$f" "m${M}_r${R}_${RUN}.pt" && git add "m${M}_r${R}_${RUN}.pt"
 # The first machine also carries its log, for a look at the run while it goes on.
 if [ "$M" = 0 ] && [ -n "$OUT" ] && [ -f "$OUT/log.jsonl" ]; then
   cp "$OUT/log.jsonl" log.jsonl && git add log.jsonl
@@ -34,8 +35,8 @@ while [ $SECONDS -lt $end ]; do
     [ "$j" = "$M" ] && continue
     out="$S/m${j}_r${R}.pt"
     [ -s "$out" ] && continue
-    if git cat-file -e "origin/sync/m$j:m${j}_r${R}.pt" 2>/dev/null; then
-      git show "origin/sync/m$j:m${j}_r${R}.pt" > "$out.tmp" && mv "$out.tmp" "$out"
+    if git cat-file -e "origin/sync/m$j:m${j}_r${R}_${RUN}.pt" 2>/dev/null; then
+      git show "origin/sync/m$j:m${j}_r${R}_${RUN}.pt" > "$out.tmp" && mv "$out.tmp" "$out"
     else
       missing=1
     fi
