@@ -84,11 +84,16 @@ jobs:
           name: init
           path: init
       - name: Starting weights (previous run)
-        if: fromJSON(needs.plan.outputs.cfg).init == 'weights'
+        if: fromJSON(needs.plan.outputs.cfg).init == 'weights' || fromJSON(needs.plan.outputs.cfg).init == 'best'
+        env:
+          WHICH: ${{ fromJSON(needs.plan.outputs.cfg).init == 'best' && 'best.pt' || 'latest.pt' }}
         run: |
           mkdir -p init
           git fetch -q --depth 1 origin weights
-          git show FETCH_HEAD:latest.pt > init/init.pt
+          git show "FETCH_HEAD:$WHICH" > init/init.pt
+      - name: Starting weights (the imitation start kept in the repository)
+        if: fromJSON(needs.plan.outputs.cfg).init == 'repo'
+        run: mkdir -p init && cp inits/bc.pt init/init.pt
       - name: Train
         env:
           CFG: ${{ needs.plan.outputs.cfg }}
