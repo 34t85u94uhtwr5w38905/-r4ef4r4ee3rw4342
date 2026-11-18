@@ -9,3 +9,4 @@ mod/.gradle
 mod/run
 mod/runclient.log
 mod/forge/src/main/resources/chestai/policy.bin
+mod/.vscode
