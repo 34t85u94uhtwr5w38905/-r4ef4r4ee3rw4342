@@ -28,7 +28,8 @@ def run(policy, kind, seed, teacher, extra):
     state = policy.initial_state(1) if policy is not None else None
     prev = None
     start, cleared = {}, {}
-    out = dict(clear=[], claim=[], reset=0, claims=0, ticks=0, busy=0)
+    out = dict(clear=[], claim=[], reset=0, claims=0, ticks=0, busy=0, turn=0.0, flips=0)
+    last_yaw, last_d = None, 0.0
     for t in range(20000):
         if teacher:
             act = env.teacher()
@@ -37,6 +38,14 @@ def run(policy, kind, seed, teacher, extra):
             act = a.numpy().astype(np.int32)
         f = json.loads(env.json(0, 1))
         cs = [c[3] for c in f["chests"]]
+        yaw = f["p"][3]
+        if last_yaw is not None:
+            d = yaw - last_yaw
+            out["turn"] += abs(d)
+            if abs(d) >= 2 and abs(last_d) >= 2 and (d > 0) != (last_d > 0):
+                out["flips"] += 1
+            last_d = d
+        last_yaw = yaw
         if any(s in (2, 3) for s in cs):
             out["busy"] += 1
         if prev is not None:
@@ -74,7 +83,7 @@ def main():
     if not args.teacher:
         pol, _ = load_policy(args.ckpt)
         pol.eval()
-    tot = dict(clear=[], claim=[], reset=0, claims=0, ticks=0, busy=0)
+    tot = dict(clear=[], claim=[], reset=0, claims=0, ticks=0, busy=0, turn=0.0, flips=0)
     for j in range(args.episodes):
         o = run(pol, args.kind, 900000 + 17 * j, args.teacher, extra)
         for k in tot:
@@ -86,6 +95,8 @@ def main():
         "spawn_to_claim_s_median": round(float(np.median(cl)), 1) if len(cl) else None,
         "claims_per_min": round(tot["claims"] / (tot["ticks"] / 1200), 2),
         "busy_share": round(tot["busy"] / tot["ticks"], 2),
+        "turn_deg_per_s": round(tot["turn"] / (tot["ticks"] / 20), 1),
+        "flips_per_s": round(tot["flips"] / (tot["ticks"] / 20), 2),
     }))
 
 
