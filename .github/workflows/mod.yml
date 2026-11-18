@@ -6,9 +6,6 @@ name: mod
 # jar on the branch "mod".
 on:
   workflow_dispatch:
-  push:
-    branches: [claude/project-thread-v5n15f]
-    paths: [".github/mod-run.txt"]
 
 permissions:
   contents: write

@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from chestai.env import VecEnv  # noqa: E402
 from chestai.model import Policy, load_policy  # noqa: E402
 from chestai.ppo import Stream, RunningScale, ppo_update  # noqa: E402
+from chestai.levels import LevelBuffer  # noqa: E402
 
 # Settings of each stage, on top of the simulator's defaults.
 STAGES = [
@@ -84,6 +85,27 @@ def average_into(policy, paths):
     return len(sds)
 
 
+EVAL_KINDS = ("full", "extreme", "rivals")
+
+
+def evaluate_round(policy, args, rnd, samples, best, log, save):
+    """The fixed test (evaluate.py) on the averaged network; the best one so far is kept as best.pt."""
+    from evaluate import run
+    t = time.time()
+    policy.eval()
+    res = {k: run(policy, k, args.eval_episodes, seed=900000 + 17 * j) for j, k in enumerate(EVAL_KINDS)}
+    policy.train()
+    score = sum(r["claims_per_min"] for r in res.values()) / len(res)
+    rep = {"eval_round": rnd, "samples_M": round(samples / 1e6, 2), "score": round(score, 3), "secs": round(time.time() - t), **res}
+    print(json.dumps(rep), flush=True)
+    log.write(json.dumps(rep) + "\n")
+    log.flush()
+    if score > best:
+        save(os.path.join(args.out, "best.pt"))
+        return score
+    return best
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--minutes", type=float, default=30)
@@ -112,6 +134,8 @@ def main():
     ap.add_argument("--share-dir", default="")
     ap.add_argument("--sync-cmd", default="", help="shell command run at each exchange; {round} is the round number")
     ap.add_argument("--vf-warmup", type=int, default=0, help="iterations at the start that train only the value")
+    ap.add_argument("--eval-episodes", type=int, default=0, help="machine 0 runs the fixed test with this many episodes a kind at each round (0: off)")
+    ap.add_argument("--plr", type=float, default=0.0, help="share of episodes replayed from the level buffer (0: off)")
     args = ap.parse_args()
 
     if args.threads:
@@ -147,6 +171,16 @@ def main():
                ent_coef=args.ent, vf_coef=args.vf, max_grad_norm=0.5)
     stream = Stream("main", args.n_envs, env.obs_dim, env.priv_dim, env.heads, args.horizon, policy.hidden)
     obs, priv = env.reset()
+    n = args.n_envs
+    plr = LevelBuffer(replay_prob=args.plr, seed=args.seed * 31 + args.machine_id) if args.plr > 0 else None
+    cur = np.zeros(n, np.uint64)
+    pending = np.zeros(n, np.uint64)
+    seed_at = np.zeros((args.horizon, n), np.uint64)
+    acc_s, acc_n = np.zeros(n), np.zeros(n)
+    if plr is not None:
+        for i in range(n):
+            pending[i] = plr.sample()
+            env.set_next_seed(i, pending[i])
 
     t0 = time.time()
     end = t0 + args.minutes * 60
@@ -161,17 +195,37 @@ def main():
         torch.save(pack(policy, vs, samples, iters, stage, args), tmp)
         os.replace(tmp, path)
 
+    best = -1.0
     while time.time() < end:
         t_it = time.time()
+        t = 0
         while not stream.full():
             act = stream.choose(policy, obs, priv)
             obs, priv, rew, done, fobs, fpriv = env.step(act)
             stream.close(policy, rew, done, fobs, fpriv, args.gamma, vs.scale)
+            if plr is not None:
+                seed_at[t] = cur
+                for i in np.nonzero(done)[0]:
+                    cur[i] = pending[i]
+                    pending[i] = plr.sample()
+                    env.set_next_seed(i, pending[i])
+            t += 1
         # The last action is chosen so that its value closes the sums.
         stream.choose(policy, obs, priv)
         t_roll = time.time() - t_it
         cfg["pi_coef"] = 0.0 if iters < args.vf_warmup else 1.0
         st = ppo_update(policy, opt, [stream], vs, cfg)
+        if plr is not None:
+            # Score of a level: its mean positive advantage over the episode.
+            pos = st["adv_raw"].clamp(min=0).numpy()
+            dn = st["done"].numpy()
+            for tt in range(pos.shape[0]):
+                acc_s += pos[tt]
+                acc_n += 1
+                for i in np.nonzero(dn[tt])[0]:
+                    if seed_at[tt, i] != 0:
+                        plr.update(int(seed_at[tt, i]), acc_s[i] / acc_n[i])
+                    acc_s[i] = acc_n[i] = 0
         # The pending action was only for its value: drop it, and keep the
         # memory from before it.
         stream.state = stream.pend[5]
@@ -201,6 +255,8 @@ def main():
                 "ent": round(st["entropy"], 3), "kl": round(st["kl"], 4), "v_loss": round(st["v_loss"], 3),
                 "rew": round(st["mean_step_reward"], 4),
             }
+            if plr is not None:
+                rep.update(plr.report())
             print(json.dumps(rep), flush=True)
             log.write(json.dumps(rep) + "\n")
             log.flush()
@@ -234,8 +290,12 @@ def main():
             for k, v in stage_params(stage, extra).items():
                 env.set_param(k, v)
             print(f"== round {rnd}: averaged {n} networks, stage {stage}", flush=True)
+            if args.eval_episodes > 0 and args.machine_id == 0:
+                best = evaluate_round(policy, args, rnd, samples, best, log, lambda p: save(p))
             next_round = time.time() + args.round_minutes * 60
     save(os.path.join(args.out, "last.pt"))
+    if args.eval_episodes > 0 and args.machine_id == 0:
+        evaluate_round(policy, args, rnd + 1, samples, best, log, lambda p: save(p))
     print("done", flush=True)
 
 

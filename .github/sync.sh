@@ -4,7 +4,7 @@
 # the other machines' files of the same round and copy them into the share
 # folder. Usage: sync.sh SHARE_DIR MACHINE MACHINES ROUND
 set -u
-S=$1; M=$2; N=$3; R=$4
+S=$1; M=$2; N=$3; R=$4; OUT=${5:-}
 f="$S/m${M}_r${R}.pt"
 W=/tmp/syncrepo
 if [ ! -d "$W/.git" ]; then
@@ -19,7 +19,12 @@ cd "$W"
 git checkout -q --orphan "w$R" 2>/dev/null || git checkout -q "w$R"
 git rm -rqf --cached . >/dev/null 2>&1 || true
 rm -f ./*.pt
-cp "$f" . && git add "m${M}_r${R}.pt" && git commit -qm "machine $M round $R"
+cp "$f" . && git add "m${M}_r${R}.pt"
+# The first machine also carries its log, for a look at the run while it goes on.
+if [ "$M" = 0 ] && [ -n "$OUT" ] && [ -f "$OUT/log.jsonl" ]; then
+  cp "$OUT/log.jsonl" log.jsonl && git add log.jsonl
+fi
+git commit -qm "machine $M round $R"
 for i in 1 2 3 4 5; do git push -qf origin "HEAD:refs/heads/sync/m$M" && break; sleep $((i * 3)); done
 end=$((SECONDS + 200))
 while [ $SECONDS -lt $end ]; do

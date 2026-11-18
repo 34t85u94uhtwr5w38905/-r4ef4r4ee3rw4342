@@ -39,6 +39,8 @@ def lib():
         L.cs_vec_take_stats.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_double)]
         L.cs_act_dims.argtypes = [ctypes.POINTER(ctypes.c_int32)]
         L.cs_vec_teacher.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32)]
+        L.cs_vec_set_next_seed.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_uint64]
+        L.cs_vec_env_stats.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_double)]
         L.cs_param_name.restype = ctypes.c_char_p
         L.cs_param_name.argtypes = [ctypes.c_int]
         _lib = L
@@ -103,6 +105,16 @@ class VecEnv:
     def take_stats(self):
         self.L.cs_vec_take_stats(self.p, self.stats.ctypes.data_as(ctypes.POINTER(ctypes.c_double)))
         return dict(zip(STAT_NAMES, self.stats.tolist()))
+
+    def set_next_seed(self, i, seed):
+        """The level environment i plays after its episode ends."""
+        self.L.cs_vec_set_next_seed(self.p, int(i), int(seed))
+
+    def env_stats(self, i):
+        """Environment i's statistics so far, as an array in STAT_NAMES order."""
+        out = np.zeros(len(STAT_NAMES), np.float64)
+        self.L.cs_vec_env_stats(self.p, i, out.ctypes.data_as(ctypes.POINTER(ctypes.c_double)))
+        return out
 
     def close(self):
         if self.p:

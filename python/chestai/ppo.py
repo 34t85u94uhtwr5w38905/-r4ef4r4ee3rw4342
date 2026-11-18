@@ -122,6 +122,7 @@ def ppo_update(policy, opt, streams, vs, cfg):
     vs.update(ret)
     scale = vs.scale
     ret_n = ret / scale
+    adv_raw = adv / scale
     adv = (adv - adv.mean()) / (adv.std() + 1e-8)
     T, B = obs.shape[0], obs.shape[1]
     stats = {"pi_loss": 0.0, "v_loss": 0.0, "entropy": 0.0, "kl": 0.0, "clip_frac": 0.0}
@@ -149,6 +150,9 @@ def ppo_update(policy, opt, streams, vs, cfg):
             n_upd += 1
     out = {k: v / max(n_upd, 1) for k, v in stats.items()}
     out["samples"] = T * B
+    # For a level buffer: the advantages before they are normalised, and the ends of episodes.
+    out["adv_raw"] = adv_raw
+    out["done"] = done
     out["ret_scale"] = scale
     out["mean_step_reward"] = float(cat([s.rew for s, _, _ in parts]).mean())
     return out

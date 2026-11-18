@@ -242,6 +242,8 @@ pub struct Env {
     pub stats: [f64; STATS_DIM],
     /// When the teacher last finished a golden apple.
     pub teacher_ate: i64,
+    /// Seed of the next episode's level, if the trainer picked one.
+    pub next_seed: Option<u64>,
 }
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {
@@ -368,7 +370,7 @@ impl Env {
         let mut rng = Rng::new(seed);
         let (g, ping, holo, extreme, ep) = new_game(&p, &mut rng);
         let n = g.chests.len();
-        let mut e = Env { p, rng, g, known: vec![Known::default(); n], ticks: 0, ep_ticks: ep, ping_ms: ping, holo_range: holo, extreme, last_hp: 20.0, since_hurt: 100, phi: 0.0, stats: [0.0; STATS_DIM], teacher_ate: -1000 };
+        let mut e = Env { p, rng, g, known: vec![Known::default(); n], ticks: 0, ep_ticks: ep, ping_ms: ping, holo_range: holo, extreme, last_hp: 20.0, since_hurt: 100, phi: 0.0, stats: [0.0; STATS_DIM], teacher_ate: -1000, next_seed: None };
         e.last_hp = e.g.sp.hp;
         e.update_known();
         e.phi = e.potential();
@@ -376,6 +378,9 @@ impl Env {
     }
 
     pub fn reset(&mut self) {
+        if let Some(seed) = self.next_seed.take() {
+            self.rng = Rng::new(seed);
+        }
         let (g, ping, holo, extreme, ep) = new_game(&self.p, &mut self.rng);
         self.known = vec![Known::default(); g.chests.len()];
         self.g = g;

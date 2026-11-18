@@ -107,3 +107,24 @@ pub unsafe extern "C" fn cs_vec_teacher(p: *mut VecEnv, out: *mut i32) {
     let n = v.envs.len();
     v.teacher(slice::from_raw_parts_mut(out, n * ACT_HEADS));
 }
+
+/// Environment `i`'s statistics so far (kept on, not taken).
+///
+/// # Safety
+/// `out` must hold `cs_stats_dim()` doubles.
+#[no_mangle]
+pub unsafe extern "C" fn cs_vec_env_stats(p: *mut VecEnv, i: i32, out: *mut f64) {
+    let v = &*p;
+    slice::from_raw_parts_mut(out, STATS_DIM).copy_from_slice(&v.envs[i as usize].stats);
+}
+
+/// The level of environment `i`'s next episode: the seed its map, chests,
+/// mobs and server settings are drawn from.
+///
+/// # Safety
+/// `p` must come from `cs_vec_new`.
+#[no_mangle]
+pub unsafe extern "C" fn cs_vec_set_next_seed(p: *mut VecEnv, i: i32, seed: u64) {
+    let v = &mut *p;
+    v.envs[i as usize].next_seed = Some(seed);
+}

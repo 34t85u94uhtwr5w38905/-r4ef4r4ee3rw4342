@@ -87,7 +87,7 @@ final class SelfTest {
             for (int i = 0; i < 4; i++) {
                 run(s, "summon Zombie " + (x + 2 + i) + " " + y + " " + (z - 2 + i) + " {Attributes:[{Name:generic.maxHealth,Base:30}],Health:30}");
             }
-            run(s, "summon Snowman " + (x - 3) + " " + y + " " + (z + 3));
+            run(s, "summon SnowMan " + (x - 3) + " " + y + " " + (z + 3));
             fromX = me.posX;
             fromZ = me.posZ;
             state = 4;

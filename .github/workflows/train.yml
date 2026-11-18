@@ -103,7 +103,7 @@ jobs:
           cd python
           python train.py --minutes "$M" --out ../runs/m$MACHINE --init ../init/init.pt --threads 4 \
             --machine-id "$MACHINE" --machines "$N" --round-minutes "$R" --share-dir "$S" \
-            --sync-cmd "bash $GITHUB_WORKSPACE/.github/sync.sh $S $MACHINE $N {round}" --seed $MACHINE $A
+            --sync-cmd "bash $GITHUB_WORKSPACE/.github/sync.sh $S $MACHINE $N {round} $GITHUB_WORKSPACE/runs/m$MACHINE" --seed $MACHINE $A
       - name: Publish the averaged weights
         if: matrix.machine == 0 && always()
         run: |
@@ -115,6 +115,7 @@ jobs:
           git checkout -q --orphan weights
           cp "$GITHUB_WORKSPACE/runs/m0/last.pt" latest.pt
           cp "$GITHUB_WORKSPACE/runs/m0/log.jsonl" log.jsonl || true
+          cp "$GITHUB_WORKSPACE/runs/m0/best.pt" best.pt || true
           git add . && git commit -qm "weights of run ${{ github.run_id }}"
           git push -qf origin HEAD:refs/heads/weights
       - uses: actions/upload-artifact@v4
