@@ -29,6 +29,9 @@ from chestai.model import Policy, load_policy  # noqa: E402
 from chestai.ppo import Stream, RunningScale, ppo_update  # noqa: E402
 from chestai.levels import LevelBuffer  # noqa: E402
 
+DENSE = dict(chests_min=5, chests_max=12, cluster_gap_max=16, ready_share=0.65, init_timer_max_s=40,
+             reset_cd_max_s=30, ep_ticks_min=3600, ep_ticks_max=7200)
+
 # Settings of each stage, on top of the simulator's defaults.
 STAGES = [
     dict(name="zombies", chests_min=2, chests_max=4, cluster_gap_max=14, relief=5, water_prob=0.2, clutter=3,
@@ -37,9 +40,11 @@ STAGES = [
          ep_ticks_min=2400, ep_ticks_max=3600),
     dict(name="mixed", chests_min=3, chests_max=7, relief=10, water_prob=0.4, w_horseman=0.4, w_golem=0.4, w_rider=0.25,
          mob_hp_min=20, mob_hp_max=50, mob_dmg_max=2.0, slow_prob=0.08, blind_prob=0.05, extreme_share=0.1),
-    dict(name="full"),
-    dict(name="extreme", extreme_share=0.5, mob_hp_max=120, mob_dmg_max=4.0, mob_kb_extra_max=1.2, mob_kbr_max=0.8,
-         slow_prob=0.25, blind_prob=0.2, proj_dmg_max=3.5, proj_punch_max=1.5, chests_max=12),
+    # A real farm has many chests close together and most of them ready, so a
+    # good player claims one every 15 to 20 seconds.
+    dict(name="full", **DENSE),
+    dict(name="extreme", **DENSE, extreme_share=0.5, mob_hp_max=120, mob_dmg_max=4.0, mob_kb_extra_max=1.2, mob_kbr_max=0.8,
+         slow_prob=0.25, blind_prob=0.2, proj_dmg_max=3.5, proj_punch_max=1.5),
 ]
 # To move on from a stage: claims per minute of play at least this, and at
 # most this share of the waves reset. (Every chest is claimed about once an
