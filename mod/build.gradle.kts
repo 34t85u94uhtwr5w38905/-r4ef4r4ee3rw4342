@@ -78,3 +78,22 @@ tasks.register<JavaExec>("selftest") {
     }
 }
 
+
+// gradle demo: the same client with a small chest farm of its own and the agent at the keys,
+// for a video (see Demo). -Pdemo.seconds=120.
+tasks.register<JavaExec>("demo") {
+    val run = net.fabricmc.loom.configuration.ide.RunConfig.runConfig(project, loom.runConfigs.getByName("client"))
+    dependsOn("downloadAssets")
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(8)) })
+    classpath = run.sourceSet.runtimeClasspath
+    mainClass.set(run.mainClass)
+    jvmArgs(run.vmArgs)
+    jvmArgs("-Dchestai.demo=true", "-Dchestai.debug=true", "-Dchestai.demo.seconds=" + (project.findProperty("demo.seconds") ?: "120"))
+    args(run.programArgs)
+    args("--width", "1280", "--height", "720")
+    workingDir = file(run.runDir)
+    environment(run.envVariables)
+    doFirst {
+        workingDir.mkdirs()
+    }
+}

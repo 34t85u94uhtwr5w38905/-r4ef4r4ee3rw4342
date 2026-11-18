@@ -34,6 +34,7 @@ public final class ChestAi {
     private File dir = new File("config", "chestai");
     private Session session;
     private final SelfTest selfTest = Boolean.getBoolean("chestai.selftest") ? new SelfTest(this) : null;
+    private final Demo demo = Boolean.getBoolean("chestai.demo") ? new Demo(this) : null;
 
     boolean on() {
         return session != null && session.on();
@@ -90,6 +91,33 @@ public final class ChestAi {
     }
 
     @SubscribeEvent
+    public void serverTick(TickEvent.ServerTickEvent e) {
+        if (demo != null && e.phase == TickEvent.Phase.END) {
+            demo.serverTick(net.minecraft.server.MinecraftServer.getServer());
+        }
+    }
+
+    @SubscribeEvent
+    public void hurt(net.minecraftforge.event.entity.living.LivingHurtEvent e) {
+        if (demo != null && Boolean.getBoolean("chestai.debug") && !e.entity.worldObj.isRemote) {
+            net.minecraft.entity.Entity src = e.source.getEntity();
+            String held = src instanceof net.minecraft.entity.player.EntityPlayer && ((net.minecraft.entity.player.EntityPlayer) src).getHeldItem() != null
+                ? ((net.minecraft.entity.player.EntityPlayer) src).getHeldItem().getDisplayName() : "-";
+            System.out.println(String.format(java.util.Locale.ROOT, "HURT %s %.1f by %s with %s resist=%d",
+                e.entity.getClass().getSimpleName(), e.ammount, e.source.getDamageType(), held, e.entity.hurtResistantTime));
+        }
+    }
+
+    @SubscribeEvent
+    public void interact(net.minecraftforge.event.entity.player.PlayerInteractEvent e) {
+        if (demo != null && !e.world.isRemote && e.pos != null
+                && e.action != net.minecraftforge.event.entity.player.PlayerInteractEvent.Action.RIGHT_CLICK_AIR
+                && demo.click(e.entityPlayer, e.pos)) {
+            e.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent e) {
         if (e.phase != TickEvent.Phase.START) {
             return;
@@ -98,6 +126,9 @@ public final class ChestAi {
         try {
             if (selfTest != null) {
                 selfTest.step(mc);
+            }
+            if (demo != null) {
+                demo.step(mc);
             }
             boolean pressed = false;
             while (key.isPressed()) {

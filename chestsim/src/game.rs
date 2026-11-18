@@ -174,7 +174,8 @@ pub enum S2C {
 #[derive(Clone, Copy, Debug)]
 pub enum C2S {
     Pos { pos: V3, yaw: f32, pitch: f32, on_ground: bool },
-    Attack { mob: u32, crit: bool, sprint: bool, yaw: f32 },
+    /// `slot`: what the hand held (the real client sends its slot before an attack).
+    Attack { mob: u32, crit: bool, sprint: bool, yaw: f32, slot: u8 },
     Claim { chest: usize },
     StartUse { item: u8 },
     StopUse,
@@ -565,7 +566,8 @@ impl Game {
                     l.sprinting = false;
                     l.attr.sprint = false;
                 }
-                self.send_up(C2S::Attack { mob: id, crit, sprint, yaw });
+                let slot = self.cp.slot;
+                self.send_up(C2S::Attack { mob: id, crit, sprint, yaw, slot });
             } else if let Some(c) = pick_chest {
                 self.send_up(C2S::Claim { chest: c });
             }
@@ -858,14 +860,16 @@ impl Game {
                     self.sp.motion[1] = 0.0;
                 }
             }
-            C2S::Attack { mob, crit, sprint, yaw } => {
+            C2S::Attack { mob, crit, sprint, yaw, slot } => {
                 let Some(mi) = self.mobs.iter().position(|m| m.id == mob && m.alive) else { return };
                 let mp = self.mobs[mi].l.body.pos;
                 let eye = [self.sp.pos[0], self.sp.pos[1] + EYE_HEIGHT, self.sp.pos[2]];
                 if dist(eye, mp) > 6.0 {
                     return;
                 }
-                let mut dmg = self.cfg.sword_dmg;
+                // Only the sword hits hard; a bow, an apple or a pearl in the hand hits
+                // like a fist (1 point), as in 1.8.
+                let mut dmg = if slot == 0 { self.cfg.sword_dmg } else { 1.0 };
                 if crit {
                     dmg *= 1.5;
                 }

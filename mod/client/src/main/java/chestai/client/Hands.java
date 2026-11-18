@@ -67,7 +67,16 @@ final class Hands {
         }
         if (k.attack) {
             Names.setInt(MISS_DELAY, mc, 0);
-            KeyBinding.onTick(gs.keyBindAttack.getKeyCode());
+            net.minecraft.entity.Entity behind = mc.objectMouseOver != null && mc.objectMouseOver.entityHit instanceof net.minecraft.entity.item.EntityArmorStand
+                ? throughStands() : null;
+            if (behind != null) {
+                // A hologram stand with a hitbox in front of a mob: the server's holograms
+                // are not there to be hit, so the blow goes to what is behind.
+                mc.thePlayer.swingItem();
+                mc.playerController.attackEntity(mc.thePlayer, behind);
+            } else {
+                KeyBinding.onTick(gs.keyBindAttack.getKeyCode());
+            }
         }
         boolean hold = k.useHeld;
         if ((k.claim || (hold && !useDown))) {
@@ -75,6 +84,32 @@ final class Hands {
         }
         key(gs.keyBindUseItem, hold);
         useDown = hold;
+    }
+
+    /** The nearest living entity on the line of sight within reach, armor stands left out. */
+    private net.minecraft.entity.Entity throughStands() {
+        net.minecraft.entity.Entity me = mc.thePlayer;
+        net.minecraft.util.Vec3 eye = me.getPositionEyes(1.0F), look = me.getLook(1.0F);
+        double reach = mc.playerController.getBlockReachDistance();
+        reach = Math.min(reach, 3.0);
+        net.minecraft.util.Vec3 end = eye.addVector(look.xCoord * reach, look.yCoord * reach, look.zCoord * reach);
+        net.minecraft.entity.Entity best = null;
+        double bestD = reach;
+        for (Object o : mc.theWorld.loadedEntityList) {
+            net.minecraft.entity.Entity e = (net.minecraft.entity.Entity) o;
+            if (e == me || e instanceof net.minecraft.entity.item.EntityArmorStand || !(e instanceof net.minecraft.entity.EntityLivingBase) || !e.canBeCollidedWith()) {
+                continue;
+            }
+            float b = e.getCollisionBorderSize();
+            net.minecraft.util.AxisAlignedBB box = e.getEntityBoundingBox().expand(b, b, b);
+            net.minecraft.util.MovingObjectPosition hit = box.calculateIntercept(eye, end);
+            double d = box.isVecInside(eye) ? 0.0 : hit != null ? eye.distanceTo(hit.hitVec) : -1.0;
+            if (d >= 0.0 && d < bestD) {
+                bestD = d;
+                best = e;
+            }
+        }
+        return best;
     }
 
     void release() {

@@ -27,6 +27,9 @@ import chestai.core.Pilot;
  * server in config/chestai, so it knows where they are the next time.
  */
 public final class Session {
+    private static final boolean DEBUG = Boolean.getBoolean("chestai.debug");
+    private int dbgAttacks, dbgOnMob;
+    private final java.util.Map<String, Integer> dbgClasses = new java.util.TreeMap<String, Integer>();
     private static final double PING = 200.0;
 
     /** A mouse that does not turn the view while the agent aims. */
@@ -235,12 +238,37 @@ public final class Session {
         first = false;
         float[] o = obs.build(f, mem, new WorldGrid(world));
         int[] a = net.act(o, draws, !settings.draw);
+        if (DEBUG && tick % 20 == 0) {
+            StringBuilder b = new StringBuilder();
+            b.append(String.format(java.util.Locale.ROOT, "CHESTAI t=%d pos=%.1f,%.1f,%.1f yaw=%.0f hp=%.1f mobs=%d holos=%d known=%d a=%s |",
+                tick, f.x, f.y, f.z, f.yaw, f.hp, f.mobs.size(), f.holos.size(), mem.chests.size(), java.util.Arrays.toString(a)));
+            for (chestai.core.Memory.Known k : mem.chests) {
+                b.append(String.format(java.util.Locale.ROOT, " (%d,%d,%d s%d %ds)", k.x, k.y, k.z, k.state, k.secs));
+            }
+            for (chestai.core.Frame.Mob m : f.mobs) {
+                b.append(String.format(java.util.Locale.ROOT, " [mob k%d %.0f,%.0f hp%.0f]", m.kind, m.x, m.z, m.hp));
+            }
+            System.out.println(b);
+        }
         // What the agent can do with what the hotbar holds.
         int pearls = lay.real[Pilot.PEARL] >= 0 ? lay.pearls : 0;
         int potions = lay.real[Pilot.POTION] >= 0 ? lay.potions : 0;
         Pilot.Keys k = pilot.step(a, pearls, pearlLeft, potions, lay.real[Pilot.BOW] >= 0 ? lay.arrows : 0, lay.real[Pilot.GAPPLE] >= 0 ? lay.gapples : 0, f.pickMob >= 0, f.pickChest >= 0);
         if (k.throwIt && k.slot == Pilot.PEARL) {
             pearlUntil = tick + (long) Math.round(settings.pearlCooldownS * 20.0);
+        }
+        if (DEBUG && k.attack) {
+            dbgAttacks++;
+            if (mc.objectMouseOver != null && mc.objectMouseOver.entityHit != null) {
+                dbgOnMob++;
+                net.minecraft.entity.Entity eh = mc.objectMouseOver.entityHit;
+                String key = eh.getClass().getSimpleName() + (eh instanceof net.minecraft.entity.EntityLivingBase && ((net.minecraft.entity.EntityLivingBase) eh).hurtTime > 0 ? "-hurt" : "-fresh");
+                Integer c = dbgClasses.get(key);
+                dbgClasses.put(key, c == null ? 1 : c + 1);
+            }
+        }
+        if (DEBUG && tick % 100 == 0) {
+            System.out.println("CHESTAI attacks=" + dbgAttacks + " on_entity=" + dbgOnMob + " pitch=" + me.rotationPitch + " " + dbgClasses);
         }
         hands.press(k, lay);
         if (tick % 200 == 0) {
