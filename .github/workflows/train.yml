@@ -3,7 +3,8 @@ name: train
 # A training run starts when a commit whose message has "[train]" reaches the
 # training branch. Settings are in .github/run.json. "init": "bc" starts from
 # a network that imitated the hand-written teacher; "weights" continues from
-# latest.pt on the branch "weights".
+# latest.pt on the branch "weights"; "repo" starts from init_file in the
+# repository (inits/bc.pt by default).
 on:
   push:
     branches: [claude/project-thread-v5n15f]
@@ -93,13 +94,23 @@ jobs:
           git show "FETCH_HEAD:$WHICH" > init/init.pt
       - name: Starting weights (the imitation start kept in the repository)
         if: fromJSON(needs.plan.outputs.cfg).init == 'repo'
-        run: mkdir -p init && cp inits/bc.pt init/init.pt
+        env:
+          FILE: ${{ fromJSON(needs.plan.outputs.cfg).init_file || 'inits/bc.pt' }}
+        run: mkdir -p init && cp "$FILE" init/init.pt
       - name: Train
         env:
           CFG: ${{ needs.plan.outputs.cfg }}
           MACHINE: ${{ matrix.machine }}
         run: |
-          M=$(python3 -c "import json,os;print(json.loads(os.environ['CFG'])['minutes'])")
+          # "until" (UTC) shortens the run so that it ends by then even if it starts late.
+          M=$(python3 -c "
+          import json, os, datetime as d
+          c = json.loads(os.environ['CFG'])
+          m = int(c['minutes'])
+          if c.get('until'):
+              end = d.datetime.fromisoformat(c['until'].replace('Z', '+00:00'))
+              m = min(m, int((end - d.datetime.now(d.timezone.utc)).total_seconds() // 60) - 3)
+          print(max(m, 5))")
           N=$(python3 -c "import json,os;print(json.loads(os.environ['CFG'])['machines'])")
           R=$(python3 -c "import json,os;print(json.loads(os.environ['CFG'])['round_minutes'])")
           A=$(python3 -c "import json,os;print(json.loads(os.environ['CFG'])['args'])")

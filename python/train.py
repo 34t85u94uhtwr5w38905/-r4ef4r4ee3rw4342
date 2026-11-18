@@ -44,7 +44,7 @@ STAGES = [
 # To move on from a stage: claims per minute of play at least this, and at
 # most this share of the waves reset. (Every chest is claimed about once an
 # episode at best, its cooldown being 3 minutes.)
-PROMOTE = [(0.6, 0.3), (0.5, 0.35), (0.45, 0.4), None]
+PROMOTE = [(0.6, 0.45), (0.5, 0.55), (0.45, 0.6), None]
 
 
 def stage_params(i, extra):
