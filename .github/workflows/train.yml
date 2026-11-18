@@ -1,0 +1,124 @@
+name: train
+
+# A training run starts when a commit whose message has "[train]" reaches the
+# training branch. Settings are in .github/run.json. "init": "bc" starts from
+# a network that imitated the hand-written teacher; "weights" continues from
+# latest.pt on the branch "weights".
+on:
+  push:
+    branches: [claude/project-thread-v5n15f]
+    paths: [".github/run.json"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: train
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: contains(github.event.head_commit.message, '[train]')
+    runs-on: ubuntu-latest
+    outputs:
+      ids: ${{ steps.p.outputs.ids }}
+      cfg: ${{ steps.p.outputs.cfg }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          c = json.load(open(".github/run.json"))
+          print("ids=" + json.dumps(list(range(int(c["machines"])))))
+          print("cfg=" + json.dumps(c))
+          PY
+
+  bc:
+    needs: plan
+    if: fromJSON(needs.plan.outputs.cfg).init == 'bc'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: chestsim/target
+          key: chestsim-${{ hashFiles('chestsim/Cargo.toml', 'chestsim/src/**') }}
+      - run: cd chestsim && cargo build --release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install numpy
+      - name: Imitate the teacher
+        run: cd python && python bc.py --minutes ${{ fromJSON(needs.plan.outputs.cfg).bc_minutes }} --out ../init/init.pt --threads 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: init
+          path: init/init.pt
+
+  train:
+    needs: [plan, bc]
+    if: always() && needs.plan.result == 'success' && (needs.bc.result == 'success' || needs.bc.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        machine: ${{ fromJSON(needs.plan.outputs.ids) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: chestsim/target
+          key: chestsim-${{ hashFiles('chestsim/Cargo.toml', 'chestsim/src/**') }}
+      - run: cd chestsim && cargo build --release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install numpy
+      - name: Starting weights (teacher imitation)
+        if: fromJSON(needs.plan.outputs.cfg).init == 'bc'
+        uses: actions/download-artifact@v4
+        with:
+          name: init
+          path: init
+      - name: Starting weights (previous run)
+        if: fromJSON(needs.plan.outputs.cfg).init == 'weights'
+        run: |
+          mkdir -p init
+          git fetch -q --depth 1 origin weights
+          git show FETCH_HEAD:latest.pt > init/init.pt
+      - name: Train
+        env:
+          CFG: ${{ needs.plan.outputs.cfg }}
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          M=$(python3 -c "import json,os;print(json.loads(os.environ['CFG'])['minutes'])")
+          N=$(python3 -c "import json,os;print(json.loads(os.environ['CFG'])['machines'])")
+          R=$(python3 -c "import json,os;print(json.loads(os.environ['CFG'])['round_minutes'])")
+          A=$(python3 -c "import json,os;print(json.loads(os.environ['CFG'])['args'])")
+          S="$GITHUB_WORKSPACE/share"
+          mkdir -p "$S"
+          cd python
+          python train.py --minutes "$M" --out ../runs/m$MACHINE --init ../init/init.pt --threads 4 \
+            --machine-id "$MACHINE" --machines "$N" --round-minutes "$R" --share-dir "$S" \
+            --sync-cmd "bash $GITHUB_WORKSPACE/.github/sync.sh $S $MACHINE $N {round}" --seed $MACHINE $A
+      - name: Publish the averaged weights
+        if: matrix.machine == 0 && always()
+        run: |
+          W=/tmp/pub
+          rm -rf $W && mkdir -p $W && cd $W && git init -q
+          git remote add origin "$(git -C "$GITHUB_WORKSPACE" remote get-url origin)"
+          git config http.https://github.com/.extraheader "$(git -C "$GITHUB_WORKSPACE" config --get http.https://github.com/.extraheader)"
+          git config user.name trainer && git config user.email trainer@users.noreply.github.com
+          git checkout -q --orphan weights
+          cp "$GITHUB_WORKSPACE/runs/m0/last.pt" latest.pt
+          cp "$GITHUB_WORKSPACE/runs/m0/log.jsonl" log.jsonl || true
+          git add . && git commit -qm "weights of run ${{ github.run_id }}"
+          git push -qf origin HEAD:refs/heads/weights
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: run-m${{ matrix.machine }}
+          path: runs/m${{ matrix.machine }}

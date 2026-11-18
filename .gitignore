@@ -1,0 +1,6 @@
+chestsim/target/
+runs/
+init/
+share/
+__pycache__/
+*.pyc

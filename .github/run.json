@@ -1,0 +1,8 @@
+{
+  "machines": 5,
+  "minutes": 320,
+  "round_minutes": 20,
+  "bc_minutes": 25,
+  "init": "bc",
+  "args": "--n-envs 256 --horizon 128 --lr 3e-4 --gamma 0.998 --ent 0.01 --log-every 10 --vf-warmup 10"
+}
