@@ -51,6 +51,11 @@ impl World {
         w
     }
 
+    /// Every cell, x fastest, then z, then y.
+    pub fn cells(&self) -> &[u8] {
+        &self.cells
+    }
+
     #[inline]
     fn idx(&self, x: i32, y: i32, z: i32) -> Option<usize> {
         if x < 0 || y < 0 || z < 0 || x >= self.sx || y >= self.sy || z >= self.sz {

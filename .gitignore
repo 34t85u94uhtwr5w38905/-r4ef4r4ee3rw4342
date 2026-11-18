@@ -4,3 +4,8 @@ init/
 share/
 __pycache__/
 *.pyc
+mod/build
+mod/.gradle
+mod/run
+mod/runclient.log
+mod/forge/src/main/resources/chestai/policy.bin

@@ -1,0 +1,109 @@
+name: mod
+
+# Builds the Forge 1.8.9 chest mod with the newest trained policy inside,
+# checks that its Java observation and network compute what the simulator
+# and PyTorch do, lets it play some seconds in a Forge client and puts the
+# jar on the branch "mod".
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/project-thread-v5n15f]
+    paths: [".github/mod-run.txt"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mod
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the newest weights
+        run: |
+          if git fetch -q --depth 1 origin weights; then
+            git show FETCH_HEAD:latest.pt > latest.pt
+            git log -1 --format=%s FETCH_HEAD
+          else
+            echo "no weights yet: the mod gets an untrained network"
+          fi
+      - uses: actions/cache@v4
+        with:
+          path: chestsim/target
+          key: chestsim-${{ hashFiles('chestsim/Cargo.toml', 'chestsim/src/**', 'chestsim/examples/**') }}
+      - name: Build the simulator and dump ticks of play
+        run: |
+          cd chestsim && cargo build --release --examples
+          ./target/release/examples/dump ../dump.txt 4 600
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Write the policy as the file the mod reads
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install numpy
+          cd chestsim && cargo build --release && cd ..
+          mkdir -p mod/forge/src/main/resources/chestai
+          cd python
+          if [ ! -f ../latest.pt ]; then
+            python -c "
+          import sys; sys.path.insert(0, '.')
+          import torch
+          from chestai.model import Policy
+          from chestai.env import VecEnv
+          from chestai.ppo import RunningScale
+          from train import pack
+          e = VecEnv(1, 0)
+          torch.save(pack(Policy(e.obs_dim, e.priv_dim, e.act_dims), RunningScale(), 0, 0, 0, None), '../latest.pt')
+          "
+          fi
+          python export_policy.py ../latest.pt ../mod/forge/src/main/resources/chestai/policy.bin --check ../check.bin --dump ../dump.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Check the mod's observation and network against the simulator's and the trainer's
+        run: |
+          mkdir -p out
+          javac -encoding UTF-8 -d out mod/core/src/main/java/chestai/core/*.java mod/core/src/test/java/chestai/core/*.java
+          java -cp out chestai.core.HoloCheck
+          java -cp out chestai.core.ObsCheck dump.txt
+          java -cp out chestai.core.NetCheck mod/forge/src/main/resources/chestai/policy.bin check.bin
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.8"
+      - name: Build the mod
+        run: cd mod && gradle build --stacktrace
+      - name: Look into the jar
+        run: |
+          ls -l mod/build/libs
+          unzip -l mod/build/libs/chestai.jar
+      - name: Let the policy play some seconds in a Forge client
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb x11-xserver-utils libgl1-mesa-dri libglx-mesa0 libxrandr2 libxcursor1 libxxf86vm1 libxi6 libxtst6 libxrender1
+          cd mod
+          LIBGL_ALWAYS_SOFTWARE=1 timeout 1200 xvfb-run -a -s "-screen 0 854x480x24" gradle selftest --stacktrace > runclient.log 2>&1 || true
+          grep -e SELFTEST -e Exception -e "Chest AI" runclient.log | head -n 80
+          grep -v -e '^\s*at ' -e '^\s*\.\.\. [0-9]* more' runclient.log | tail -n 120
+          cat run/selftest.txt
+          grep -q '^ok' run/selftest.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mod
+          path: |
+            mod/build/libs/chestai.jar
+            mod/runclient.log
+      - name: Put the jar on the branch "mod"
+        run: |
+          blob=$(git hash-object -w mod/build/libs/chestai.jar)
+          tree=$(printf '100644 blob %s\tchestai-1.8.9.jar\n' "$blob" | git mktree)
+          commit=$(git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit-tree "$tree" -m "Mod built by run $GITHUB_RUN_ID from $GITHUB_SHA")
+          git push --force origin "$commit:refs/heads/mod"
