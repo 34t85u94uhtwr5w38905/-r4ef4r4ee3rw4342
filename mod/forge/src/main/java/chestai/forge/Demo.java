@@ -39,6 +39,8 @@ final class Demo {
     private int state, ticks;
     private final List<Chest> chests = new ArrayList<Chest>();
     private volatile boolean farmOn;
+    private volatile String pendingName;
+    private volatile double[] pendingAt;
     private int claims, resets;
 
     private static final class Chest {
@@ -84,66 +86,15 @@ final class Demo {
                 mc.displayGuiScreen(null);
                 return;
             }
-            MinecraftServer s = mc.getIntegratedServer();
-            s.setDifficultyForAllWorlds(EnumDifficulty.EASY);
-            String n = me.getName();
-            run(s, "gamerule doMobSpawning false");
-            run(s, "gamerule sendCommandFeedback false");
-            // A flat world spawns slimes before the rule is in.
-            for (int i = 0; i < 4; i++) {
-                run(s, "kill @e[type=!Player]");
-            }
-            run(s, "gamerule logAdminCommands false");
+            pendingAt = new double[] {me.posX, me.posY, me.posZ};
+            pendingName = me.getName();
             me.triggerAchievement(net.minecraft.stats.AchievementList.openInventory);
-            run(s, "gamerule doDaylightCycle false");
-            run(s, "time set 6000");
-            run(s, "give " + n + " diamond_sword 1 0 {ench:[{id:16,lvl:2}]}");
-            run(s, "give " + n + " bow 1 0 {ench:[{id:49,lvl:2},{id:51,lvl:1}]}");
-            run(s, "give " + n + " golden_apple 32");
-            run(s, "give " + n + " ender_pearl 8");
-            run(s, "give " + n + " potion 6 16421");
-            run(s, "give " + n + " arrow 64");
-            run(s, "replaceitem entity " + n + " slot.armor.head diamond_helmet 1 0 {ench:[{id:0,lvl:2}]}");
-            run(s, "replaceitem entity " + n + " slot.armor.chest diamond_chestplate 1 0 {ench:[{id:0,lvl:2}]}");
-            run(s, "replaceitem entity " + n + " slot.armor.legs diamond_leggings 1 0 {ench:[{id:0,lvl:2}]}");
-            run(s, "replaceitem entity " + n + " slot.armor.feet diamond_boots 1 0 {ench:[{id:0,lvl:2},{id:2,lvl:4}]}");
-            run(s, "effect " + n + " 1 1000000 2 true");
-            WorldServer w = s.worldServerForDimension(0);
-            int x0 = (int) Math.floor(me.posX), y = (int) Math.floor(me.posY), z0 = (int) Math.floor(me.posZ);
-            // Four chests on stepped hills 3 to 7 blocks high, 25 to 35 blocks apart: the
-            // agent climbs, drops and can travel with Punch arrows between them.
-            int[][] at = {{24, 4, 4}, {52, -10, 7}, {74, 16, 5}, {44, 38, 3}};
-            for (int[] a : at) {
-                int cx = x0 + a[0], cz = z0 + a[1], h = a[2];
-                for (int k = 1; k <= h; k++) {
-                    int r = 2 * (h - k) + 3;
-                    run(s, "fill " + (cx - r) + " " + (y + k - 1) + " " + (cz - r) + " " + (cx + r) + " " + (y + k - 1) + " " + (cz + r) + " grass");
-                }
-                Chest c = new Chest();
-                c.pos = new BlockPos(cx, y + h, cz);
-                chests.add(c);
-                run(s, "setblock " + cx + " " + (y + h) + " " + cz + " chest");
-                run(s, "fill " + (cx - 3) + " " + (y + h) + " " + (cz + 3) + " " + (cx + 1) + " " + (y + h + 1) + " " + (cz + 3) + " stonebrick");
+            state = 5;
+        } else if (state == 5) {
+            // The farm is built on the server's thread (see serverTick).
+            if (!farmOn) {
+                return;
             }
-            run(s, "fill " + (x0 + 36) + " " + y + " " + (z0 - 4) + " " + (x0 + 38) + " " + (y + 3) + " " + (z0 + 2) + " stone");
-            for (Chest c : chests) {
-                c.holo = new EntityArmorStand(w, c.pos.getX() + 0.5, c.pos.getY() + 0.6, c.pos.getZ() + 0.5);
-                c.holo.setInvisible(true);
-                if (!Boolean.getBoolean("chestai.demo.solidholo")) {
-                    net.minecraft.nbt.NBTTagCompound tag = new net.minecraft.nbt.NBTTagCompound();
-                    c.holo.writeEntityToNBT(tag);
-                    tag.setBoolean("Marker", true);
-                    tag.setBoolean("NoGravity", true);
-                    tag.setBoolean("Invisible", true);
-                    c.holo.readEntityFromNBT(tag);
-                }
-                c.holo.setAlwaysRenderNameTag(true);
-                c.holo.setCustomNameTag("§eNext Wave: §f0 seconds");
-                w.spawnEntityInWorld(c.holo);
-            }
-            chests.get(3).state = COOLDOWN;
-            chests.get(3).timer = 20 * 25;
-            farmOn = true;
             state = 2;
         } else if (state == 2) {
             if (++ticks < 60) {
@@ -184,8 +135,74 @@ final class Demo {
         }
     }
 
+    /** Builds the farm and gives the kit, on the server's thread. */
+    private void setup(MinecraftServer s, String n, double px, double py, double pz) {
+        s.setDifficultyForAllWorlds(EnumDifficulty.EASY);
+        run(s, "gamerule doMobSpawning false");
+        run(s, "gamerule sendCommandFeedback false");
+        // A flat world spawns slimes before the rule is in.
+        for (int i = 0; i < 4; i++) {
+            run(s, "kill @e[type=!Player]");
+        }
+        run(s, "gamerule logAdminCommands false");
+        run(s, "gamerule doDaylightCycle false");
+        run(s, "time set 6000");
+        run(s, "give " + n + " diamond_sword 1 0 {ench:[{id:16,lvl:2}]}");
+        run(s, "give " + n + " bow 1 0 {ench:[{id:49,lvl:2},{id:51,lvl:1}]}");
+        run(s, "give " + n + " golden_apple 32");
+        run(s, "give " + n + " ender_pearl 8");
+        run(s, "give " + n + " potion 6 16421");
+        run(s, "give " + n + " arrow 64");
+        run(s, "replaceitem entity " + n + " slot.armor.head diamond_helmet 1 0 {ench:[{id:0,lvl:2}]}");
+        run(s, "replaceitem entity " + n + " slot.armor.chest diamond_chestplate 1 0 {ench:[{id:0,lvl:2}]}");
+        run(s, "replaceitem entity " + n + " slot.armor.legs diamond_leggings 1 0 {ench:[{id:0,lvl:2}]}");
+        run(s, "replaceitem entity " + n + " slot.armor.feet diamond_boots 1 0 {ench:[{id:0,lvl:2},{id:2,lvl:4}]}");
+        run(s, "effect " + n + " 1 1000000 2 true");
+        WorldServer w = s.worldServerForDimension(0);
+        int x0 = (int) Math.floor(px), y = (int) Math.floor(py), z0 = (int) Math.floor(pz);
+        // Four chests on stepped hills 3 to 7 blocks high, 25 to 35 blocks apart: the
+        // agent climbs, drops and can travel with Punch arrows between them.
+        int[][] at = {{24, 4, 4}, {52, -10, 7}, {74, 16, 5}, {44, 38, 3}};
+        for (int[] a : at) {
+            int cx = x0 + a[0], cz = z0 + a[1], h = a[2];
+            for (int k = 1; k <= h; k++) {
+                int r = 2 * (h - k) + 3;
+                run(s, "fill " + (cx - r) + " " + (y + k - 1) + " " + (cz - r) + " " + (cx + r) + " " + (y + k - 1) + " " + (cz + r) + " grass");
+            }
+            Chest c = new Chest();
+            c.pos = new BlockPos(cx, y + h, cz);
+            chests.add(c);
+            run(s, "setblock " + cx + " " + (y + h) + " " + cz + " chest");
+            run(s, "fill " + (cx - 3) + " " + (y + h) + " " + (cz + 3) + " " + (cx + 1) + " " + (y + h + 1) + " " + (cz + 3) + " stonebrick");
+        }
+        run(s, "fill " + (x0 + 36) + " " + y + " " + (z0 - 4) + " " + (x0 + 38) + " " + (y + 3) + " " + (z0 + 2) + " stone");
+        for (Chest c : chests) {
+            c.holo = new EntityArmorStand(w, c.pos.getX() + 0.5, c.pos.getY() + 0.6, c.pos.getZ() + 0.5);
+            c.holo.setInvisible(true);
+            if (!Boolean.getBoolean("chestai.demo.solidholo")) {
+                net.minecraft.nbt.NBTTagCompound tag = new net.minecraft.nbt.NBTTagCompound();
+                c.holo.writeEntityToNBT(tag);
+                tag.setBoolean("Marker", true);
+                tag.setBoolean("NoGravity", true);
+                tag.setBoolean("Invisible", true);
+                c.holo.readEntityFromNBT(tag);
+            }
+            c.holo.setAlwaysRenderNameTag(true);
+            c.holo.setCustomNameTag("§eNext Wave: §f0 seconds");
+            w.spawnEntityInWorld(c.holo);
+        }
+        chests.get(3).state = COOLDOWN;
+        chests.get(3).timer = 20 * 25;
+        farmOn = true;
+    }
+
     /** The server's side, every tick. */
     void serverTick(MinecraftServer s) {
+        if (pendingName != null) {
+            String n = pendingName;
+            pendingName = null;
+            setup(s, n, pendingAt[0], pendingAt[1], pendingAt[2]);
+        }
         if (!farmOn) {
             return;
         }
