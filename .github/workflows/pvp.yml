@@ -1,0 +1,373 @@
+name: pvp
+
+# A second fleet for the agent of another repository: the code comes from
+# there ("code"), this fleet trains the same agent with the same rewards on
+# its own machines, plays the league that repository keeps, and publishes its
+# network to the branch "pvp-island" every round. Each fleet moves towards the
+# other's network after its own averaging (--island-beta, python/pvpai/sync.py).
+
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: owner/repo@ref of the code to train with
+        required: true
+      island:
+        description: owner/repo:branch of the other fleet's network
+        required: true
+      machines:
+        description: Number of machines
+        default: "18"
+      minutes:
+        description: Minutes each machine trains before the run ends
+        default: "330"
+      round_minutes:
+        description: Minutes between exchanges of weights
+        default: "5"
+      args:
+        description: Extra options for train.py
+        required: true
+      combo_machines:
+        description: How many of the machines play for combos (see the code's train.yml)
+        default: "2"
+      previous:
+        description: Id of the run to continue from (empty starts from the other fleet's network)
+        default: ""
+      relaunch:
+        description: Start the next run when this one ends
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: pvp
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      ids: ${{ steps.plan.outputs.ids }}
+      origin: ${{ steps.plan.outputs.origin }}
+    steps:
+      - id: plan
+        env:
+          MACHINES: ${{ inputs.machines }}
+          ROUND: ${{ inputs.round_minutes }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os, time
+          print("ids=" + json.dumps(list(range(int(os.environ["MACHINES"])))))
+          # The machines count their rounds from one shared moment. The first
+          # exchange comes about one round after they have started training.
+          print("origin=%d" % (time.time() + 150 + 60 * float(os.environ["ROUND"])))
+          PY
+
+  train:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      ISLAND: ${{ inputs.island }}
+      SNAP_REMOTE: https://github.com/${{ github.repository }}
+    strategy:
+      fail-fast: false
+      matrix:
+        machine: ${{ fromJSON(needs.plan.outputs.ids) }}
+    steps:
+      - id: code
+        env:
+          CODE: ${{ inputs.code }}
+        run: |
+          echo "repo=${CODE%@*}" >> "$GITHUB_OUTPUT"
+          echo "ref=${CODE#*@}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.code.outputs.repo }}
+          ref: ${{ steps.code.outputs.ref }}
+      - uses: actions/cache@v4
+        with:
+          path: sim/target
+          key: sim-${{ hashFiles('sim/Cargo.toml', 'sim/Cargo.lock', 'sim/src/**', 'sim/tests/**') }}
+      - name: Build and test the simulator
+        run: cd sim && cargo test --release && cargo build --release
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install trainer dependencies
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install numpy
+      - name: Fetch the weights of the run this one continues
+        if: inputs.previous != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: weights
+          path: share/in
+          run-id: ${{ inputs.previous }}
+          github-token: ${{ github.token }}
+      - name: Start from the other fleet's network
+        if: inputs.previous == ''
+        run: |
+          git fetch -q --depth 1 "https://github.com/${ISLAND%%:*}" "${ISLAND#*:}"
+          git cat-file blob FETCH_HEAD:latest.pt > seed/stage1.pt
+          ls -l seed/stage1.pt
+      - name: Start the trainers
+        env:
+          MINUTES: ${{ inputs.minutes }}
+          MACHINES: ${{ inputs.machines }}
+          ROUND: ${{ inputs.round_minutes }}
+          MODE: average
+          EXTRA: ${{ inputs.args }}
+          MACHINE: ${{ matrix.machine }}
+          ORIGIN: ${{ needs.plan.outputs.origin }}
+          COMBO: ${{ inputs.combo_machines }}
+        run: |
+          # The last few machines play for combos: a long unanswered run of
+          # hits pays more and more, up to twelve hits, mostly against the
+          # insane bot, which hits back fast, starting close. Their weights
+          # are averaged with the others' as usual, so what they find goes
+          # into the one agent.
+          # Before them as many play on servers whose hits hardly move
+          # anybody, close together, and as many again against opponents
+          # with every advantage (the insane bot, reach, no knockback,
+          # Strength), starting hurt, where pearls and potions have to be
+          # timed. The rest play the mix of everything. All of them are paid
+          # the same way, so that the critic they average stays one critic.
+          C=${COMBO:-0}
+          FROM_END=$(( MACHINES - 1 - MACHINE ))
+          if [ "$FROM_END" -lt "$C" ]; then
+            EXTRA="$EXTRA --param insane_prob=0.7"
+            EXTRA="$EXTRA --param start_dist_max=6 --param drill_prob=0 --param lesson_prob=0.2"
+            echo "Combo machine"
+          elif [ "$FROM_END" -lt $(( 2 * C )) ]; then
+            EXTRA="$EXTRA --param tiny_kb_prob=0.85 --param start_dist_max=5"
+            EXTRA="$EXTRA --param insane_prob=0.6 --param lesson_prob=0.2"
+            echo "Low knockback machine"
+          elif [ "$FROM_END" -lt $(( 3 * C )) ]; then
+            EXTRA="$EXTRA --param insane_prob=0.8 --param opp_strength_prob=0.4 --param opp_edge_prob=0.9"
+            EXTRA="$EXTRA --param start_hurt=0.4 --param start_health_min=6 --param start_health_max=14"
+            EXTRA="$EXTRA --param lesson_prob=0.35 --param lessons=448"
+            echo "Pressure machine"
+          elif [ "$FROM_END" -lt $(( 4 * C )) ]; then
+            # Mostly against itself and its past selves.
+            EXTRA="$EXTRA --n-selfplay 192 --n-bot 64 --n-league 64"
+            echo "Self-play machine"
+          fi
+          # Two processes use the four cores better than one. They average
+          # their weights every few seconds through a folder in memory. The
+          # first one also shares with the other machines: it writes its
+          # weights to share/out and reads the others' from share/in, and the
+          # steps below carry the files between machines. The trainers keep
+          # running in the background while those steps run.
+          S="$GITHUB_WORKSPACE/share"
+          mkdir -p "$S/out" "$S/in" "$S/dl" /dev/shm/pvp
+          echo $(( $(date +%s) + (${MINUTES%.*} + 8) * 60 )) > "$S/deadline.txt"
+          ls -l "$S/in"
+          # The earlier versions of the agent that part of the duels are
+          # played against.
+          bash .github/actions/round/pool.sh || true
+          cd python
+          for p in 0 1; do
+            nohup python train.py --minutes "$MINUTES" --out "runs/p$p" --threads 2 \
+              --worker-id "$p" --workers 2 --sync-dir /dev/shm/pvp \
+              --machine-id "$MACHINE" --machines "$MACHINES" --machine-mode "$MODE" \
+              --machine-out "$S/out" --machine-in "$S/in" --round-origin "$ORIGIN" \
+              --machine-minutes "$ROUND" --machine-wait 75 --league-dir "$S/pool" --island-dir "$S/island" \
+              --init ../seed/stage1.pt $EXTRA > "$S/p$p.log" 2>&1 &
+            echo $! > "$S/p$p.pid"
+          done
+          sleep 30
+          tail -n 5 "$S/p0.log" "$S/p1.log"
+          kill -0 "$(cat "$S/p0.pid")" && kill -0 "$(cat "$S/p1.pid")"
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - uses: ./.github/actions/rounds
+        with:
+          machine: ${{ matrix.machine }}
+          machines: ${{ inputs.machines }}
+          round-minutes: ${{ inputs.round_minutes }}
+          snapshot-every: "1"
+          branch: pvp-island
+      - name: Wait for the trainers and show the end of their logs
+        if: always()
+        env:
+          STATUS: ${{ job.status }}
+        run: |
+          end=$(cat share/deadline.txt 2>/dev/null || echo 0)
+          for p in 0 1; do
+            pid=$(cat "share/p$p.pid" 2>/dev/null || echo)
+            [ -n "$pid" ] || continue
+            if [ "$STATUS" = cancelled ]; then kill "$pid" 2>/dev/null || true; fi
+            while kill -0 "$pid" 2>/dev/null && [ "$(date +%s)" -lt "$end" ] && [ "$STATUS" != cancelled ]; do
+              sleep 2
+            done
+          done
+          tail -n 40 share/p0.log share/p1.log || true
+          grep -q '^saved ' share/p0.log && grep -q '^saved ' share/p1.log
+      - name: Leave the weights for the next run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-m${{ matrix.machine }}
+          path: share/out/w*.pt
+          if-no-files-found: ignore
+          retention-days: 1
+          compression-level: 0
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-m${{ matrix.machine }}
+          path: |
+            python/runs/*/log.jsonl
+            share/p*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  collect:
+    needs: train
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    outputs:
+      source: ${{ steps.pick.outputs.source }}
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: final-m*
+          path: weights
+          merge-multiple: true
+      - id: pick
+        env:
+          PREVIOUS: ${{ inputs.previous }}
+        run: |
+          # The next run continues from this one, or from the one before if
+          # no machine of this one left weights.
+          n=$(ls weights/w*.pt 2>/dev/null | wc -l)
+          echo "$n machines left weights"
+          if [ "$n" -gt 0 ]; then
+            echo "have=yes" >> "$GITHUB_OUTPUT"
+            echo "source=$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=$PREVIOUS" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.pick.outputs.have == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: weights
+          path: weights/w*.pt
+          retention-days: 7
+          compression-level: 0
+
+  relaunch:
+    needs: collect
+    if: ${{ always() && !cancelled() && inputs.relaunch }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start the next run unless a STOP file exists in the repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MINUTES: ${{ inputs.minutes }}
+          MACHINES: ${{ inputs.machines }}
+          ROUND: ${{ inputs.round_minutes }}
+          EXTRA: ${{ inputs.args }}
+          COMBO: ${{ inputs.combo_machines }}
+          SOURCE: ${{ needs.collect.outputs.source }}
+          ISLAND: ${{ inputs.island }}
+          CODE: ${{ inputs.code }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/contents/STOP" >/dev/null 2>&1; then
+            echo "STOP file present, not starting another run"
+            exit 0
+          fi
+          # A run that ended long before its time broke somewhere: stop
+          # instead of starting broken runs one after another.
+          started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .run_started_at)
+          elapsed=$(( ($(date +%s) - $(date -d "$started" +%s)) / 60 ))
+          if [ "$elapsed" -lt $(( ${MINUTES%.*} / 2 )) ]; then
+            echo "Run lasted $elapsed minutes of $MINUTES, not starting another run"
+            exit 1
+          fi
+          gh workflow run pvp.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f code="$CODE" -f island="$ISLAND" \
+            -f machines="$MACHINES" -f minutes="$MINUTES" -f round_minutes="$ROUND" -f combo_machines="$COMBO" \
+            -f args="$EXTRA" -f previous="$SOURCE" -f relaunch=true
